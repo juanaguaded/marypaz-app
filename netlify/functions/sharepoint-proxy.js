@@ -2,41 +2,63 @@
 // Downloads Excel files from SharePoint server-side, bypassing browser CORS restrictions
 
 const https = require('https');
-const http = require('http');
+const http  = require('http');
+const { URL } = require('url');
 
-exports.handler = async function(event, context) {
-  // Only allow GET
+exports.handler = async function(event) {
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const targetUrl = event.queryStringParameters && event.queryStringParameters.url;
+  let targetUrl = event.queryStringParameters && event.queryStringParameters.url;
   if (!targetUrl) {
     return { statusCode: 400, body: 'Missing url parameter' };
   }
 
-  // Only allow SharePoint and OneDrive domains for security
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(targetUrl);
-  } catch(e) {
+  // Security: only allow Microsoft domains
+  let parsed;
+  try { parsed = new URL(targetUrl); } catch(e) {
     return { statusCode: 400, body: 'Invalid URL' };
   }
-
-  const allowedHosts = [
-    'sharepoint.com',
-    'onedrive.com',
-    'onedrive.live.com',
-    '1drv.ms',
-    'microsoft.com',
-  ];
-  const isAllowed = allowedHosts.some(h => parsedUrl.hostname.endsWith(h));
-  if (!isAllowed) {
-    return { statusCode: 403, body: 'Domain not allowed' };
+  const allowed = ['sharepoint.com','onedrive.com','onedrive.live.com','1drv.ms','microsoft.com','microsoftonline.com'];
+  if (!allowed.some(h => parsed.hostname.endsWith(h))) {
+    return { statusCode: 403, body: 'Domain not allowed: ' + parsed.hostname };
   }
 
+  // Force download=1 on SharePoint URLs (avoid preview page)
+  if (parsed.hostname.includes('sharepoint.com')) {
+    parsed.searchParams.set('download', '1');
+    targetUrl = parsed.toString();
+  }
+
+  console.log('[proxy] Starting download:', targetUrl);
+
   try {
-    const data = await fetchWithRedirects(targetUrl, 5);
+    const { buffer, contentType, finalUrl } = await fetchFollowRedirects(targetUrl, 10);
+
+    console.log('[proxy] Final URL:', finalUrl);
+    console.log('[proxy] Content-Type:', contentType);
+    console.log('[proxy] Bytes received:', buffer.length);
+
+    // Detect if SharePoint returned HTML instead of the file
+    const isHtml = contentType && contentType.includes('text/html');
+    const startsWithHtml = buffer.length > 0 && buffer.slice(0, 5).toString('utf8').trim().startsWith('<');
+
+    if (isHtml || startsWithHtml) {
+      console.error('[proxy] Got HTML instead of file — SharePoint returned a preview page');
+      console.error('[proxy] First 500 chars:', buffer.slice(0, 500).toString('utf8'));
+      return {
+        statusCode: 502,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: 'SharePoint returned HTML instead of the file',
+          contentType,
+          finalUrl,
+          preview: buffer.slice(0, 200).toString('utf8')
+        })
+      };
+    }
+
     return {
       statusCode: 200,
       headers: {
@@ -45,55 +67,89 @@ exports.handler = async function(event, context) {
         'Access-Control-Allow-Methods': 'GET',
         'Cache-Control': 'no-cache',
       },
-      body: data.toString('base64'),
+      body: buffer.toString('base64'),
       isBase64Encoded: true,
     };
+
   } catch(err) {
-    console.error('Proxy error:', err.message);
+    console.error('[proxy] Error:', err.message);
     return {
       statusCode: 500,
-      headers: { 'Access-Control-Allow-Origin': '*' },
+      headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: err.message }),
     };
   }
 };
 
-// Follows redirects (SharePoint often redirects before serving the file)
-function fetchWithRedirects(url, maxRedirects) {
+// Follows up to maxRedirects redirects, returns buffer + headers
+function fetchFollowRedirects(url, maxRedirects, cookieJar = '') {
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    const protocol = url.startsWith('https') ? https : http;
+    const parsed = new URL(url);
+    const protocol = parsed.protocol === 'https:' ? https : http;
 
-    const req = protocol.get(url, {
+    const options = {
+      hostname: parsed.hostname,
+      port:     parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path:     parsed.pathname + parsed.search,
+      method:   'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Marypaz-Proxy/1.0)',
-        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*',
+        // Mimic a real browser to avoid SharePoint blocking
+        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept':          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'identity', // avoid gzip so we get raw bytes
+        ...(cookieJar ? { 'Cookie': cookieJar } : {}),
+      },
+      timeout: 20000,
+    };
+
+    const req = protocol.request(options, (res) => {
+      console.log('[proxy] HTTP', res.statusCode, url.substring(0, 80));
+      console.log('[proxy] Content-Type:', res.headers['content-type']);
+
+      // Collect cookies for redirect chain (SharePoint auth uses cookies)
+      let newCookies = cookieJar;
+      if (res.headers['set-cookie']) {
+        const cookies = res.headers['set-cookie'].map(c => c.split(';')[0]);
+        newCookies = [cookieJar, ...cookies].filter(Boolean).join('; ');
       }
-    }, (res) => {
+
       // Follow redirects
-      if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308)
-          && res.headers.location && maxRedirects > 0) {
-        const redirectUrl = res.headers.location.startsWith('http')
-          ? res.headers.location
-          : new URL(res.headers.location, url).toString();
-        resolve(fetchWithRedirects(redirectUrl, maxRedirects - 1));
+      const isRedirect = [301,302,303,307,308].includes(res.statusCode);
+      if (isRedirect && res.headers.location && maxRedirects > 0) {
+        let nextUrl = res.headers.location;
+        // Handle relative redirects
+        if (!nextUrl.startsWith('http')) {
+          nextUrl = new URL(nextUrl, url).toString();
+        }
+        console.log('[proxy] Redirect →', nextUrl.substring(0, 80));
+        // Consume response body before following redirect
+        res.resume();
+        resolve(fetchFollowRedirects(nextUrl, maxRedirects - 1, newCookies));
         return;
       }
 
       if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} from SharePoint`));
+        res.resume();
+        reject(new Error('HTTP ' + res.statusCode + ' from ' + url.substring(0, 60)));
         return;
       }
 
+      const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        resolve({
+          buffer,
+          contentType: res.headers['content-type'] || '',
+          finalUrl: url,
+        });
+      });
       res.on('error', reject);
     });
 
     req.on('error', reject);
-    req.setTimeout(15000, () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+    req.end();
   });
 }
