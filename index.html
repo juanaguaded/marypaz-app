@@ -969,30 +969,23 @@ async function startQRScan(){
     document.getElementById('btn-qr').textContent='✕  Cancelar QR';
     qrActive=true;
 
-    // Use BarcodeDetector if available, else ZXing
-    if('BarcodeDetector' in window){
-      const det=new BarcodeDetector({formats:['qr_code']});
-      qrInterval=setInterval(async()=>{
-        if(!qrActive||video.readyState<2||!video.videoWidth) return;
-        try{
-          // Pass video directly — most reliable on Android Chrome
-          const codes=await det.detect(video);
-          if(codes.length>0) handleQRCode(codes[0].rawValue);
-        }catch(e){}
-      },300);
-    } else {
-      const ZXingLib=window.ZXing;
-      if(ZXingLib&&ZXingLib.BrowserMultiFormatReader){
-        qrZxing=new ZXingLib.BrowserMultiFormatReader();
-        qrZxing.decodeFromStream(stream,video,(result)=>{
-          if(result) handleQRCode(result.getText());
-        });
-      }
-    }
+    // Force ZXing for QR — BarcodeDetector unreliable across Android devices
+    startQRZxing(stream, video);
   }catch(err){
     console.error(err);
     showToast('No se pudo acceder a la cámara','red');
   }
+}
+
+function startQRZxing(stream, video){
+  const ZXingLib=window.ZXing;
+  if(!ZXingLib||!ZXingLib.BrowserMultiFormatReader){
+    showToast('Error: librería no disponible','red'); return;
+  }
+  qrZxing=new ZXingLib.BrowserMultiFormatReader();
+  qrZxing.decodeFromStream(stream, video, (result)=>{
+    if(result) handleQRCode(result.getText());
+  });
 }
 
 function stopQRScan(){
