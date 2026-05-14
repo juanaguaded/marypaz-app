@@ -1011,15 +1011,23 @@ async function handleQRCode(url){
   stopQRScan();
   showToast('QR detectado, descargando...','green');
 
-  // Convert OneDrive share URL to direct download URL
   const downloadUrl=convertOneDriveUrl(url);
 
+  console.log('[QR] Original:', url);
+  console.log('[QR] Convertida:', downloadUrl);
+
   try{
-    // Route through Netlify Function proxy to avoid CORS issues
     const proxiedUrl='/.netlify/functions/sharepoint-proxy?url='+encodeURIComponent(downloadUrl);
+    console.log('[QR] Proxy URL:', proxiedUrl);
     const response=await fetch(proxiedUrl);
-    if(!response.ok) throw new Error('HTTP '+response.status);
+    console.log('[QR] Status:', response.status, response.statusText);
+    if(!response.ok){
+      const body=await response.text().catch(()=>'');
+      console.error('[QR] Error body:', body);
+      throw new Error('HTTP '+response.status+' '+response.statusText);
+    }
     const arrayBuffer=await response.arrayBuffer();
+    console.log('[QR] Bytes recibidos:', arrayBuffer.byteLength);
     const wb=XLSX.read(new Uint8Array(arrayBuffer),{type:'array'});
     orderLines=parseAllSheets(wb);
     if(!orderLines.length){
@@ -1033,8 +1041,8 @@ async function handleQRCode(url){
     const t=document.getElementById('btn-top'); t.disabled=false; t.style.display='block';
     showToast('✓ Albarán cargado desde QR','green');
   }catch(err){
-    console.error(err);
-    showToast('Error al descargar el Excel','red');
+    console.error('[QR] Error final:', err.message);
+    showToast('Error: '+err.message,'red');
   }
 }
 
