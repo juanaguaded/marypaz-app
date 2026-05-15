@@ -660,9 +660,6 @@ let lastRegisteredKey=''; // tracks last registered SKU-talla for duplicate dete
 let pendingDupSku=null, pendingDupTalla=null;
 
 function handleCode(raw){
-  // Ignore if duplicate confirmation is pending
-  if(document.getElementById('pending-scan').classList.contains('show')) return;
-
   const decoded=decodeMarypaz(raw);
   if(!decoded) return;
 
@@ -672,6 +669,21 @@ function handleCode(raw){
   lastCode=raw; lastCodeTime=now;
 
   const key=`${decoded.sku}-${decoded.talla}`;
+  const isPending=document.getElementById('pending-scan').classList.contains('show');
+
+  if(isPending){
+    // A duplicate confirmation is showing
+    if(key===`${pendingDupSku}-${pendingDupTalla}`){
+      // Same code again — keep panel open, ignore
+      return;
+    } else {
+      // Different code — dismiss pending, register new one directly
+      document.getElementById('pending-scan').classList.remove('show');
+      pendingDupSku=null; pendingDupTalla=null;
+      registerDirectly(decoded.sku, decoded.talla);
+      return;
+    }
+  }
 
   if(key===lastRegisteredKey){
     // Same SKU+talla as last registered — ask for confirmation
@@ -681,7 +693,7 @@ function handleCode(raw){
     const got=(scanned[key]||0)+1, exp=line?line.qty:0;
     document.getElementById('pending-desc').textContent=line?`${line.desc} · ${got}/${exp} uds.`:'⚠️ No estaba en el pedido';
     document.getElementById('pending-scan').classList.add('show');
-    if(navigator.vibrate) navigator.vibrate([40,40,40]); // distinct pattern for duplicate
+    if(navigator.vibrate) navigator.vibrate([40,40,40]);
     return;
   }
 
@@ -1280,6 +1292,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.9</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.0</div>
 </body>
 </html>
