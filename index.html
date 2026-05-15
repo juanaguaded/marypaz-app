@@ -248,16 +248,7 @@
 <!-- ══ PANTALLA 2: ESCANEAR ══ -->
 <div class="screen" id="screen-2">
 
-  <!-- Ver resultado ARRIBA DEL TODO -->
-  <button class="btn btn-primary" onclick="goToResults()" style="margin-bottom:16px">Ver resultado final →</button>
-
-  <div class="scan-hero">
-    <div class="scan-counter" id="scan-counter">0</div>
-    <div class="scan-label">unidades registradas</div>
-    <div class="progress-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
-    <div class="progress-label" id="progress-label">0 / 0 líneas del pedido</div>
-  </div>
-
+  <!-- 1. ESCÁNER -->
   <div class="card">
     <div class="card-title">
       <span>Escáner de código de barras</span>
@@ -290,23 +281,6 @@
       <div class="method-tag" id="method-tag">—</div>
     </div>
 
-    <!-- FEEDBACK BELOW CAMERA -->
-    <div class="scan-feedback">
-      <div class="pending-scan" id="pending-scan">
-        <div class="pending-label">Código detectado — ¿confirmar?</div>
-        <div class="pending-sku" id="pending-sku">—</div>
-        <div class="pending-desc" id="pending-desc">—</div>
-        <div class="pending-buttons">
-          <button class="btn btn-secondary" onclick="rejectScan()">✕ No</button>
-          <button class="btn btn-green" onclick="confirmScan()">✓ Sí, añadir</button>
-        </div>
-      </div>
-      <div class="last-scan" id="last-scan">
-        <div class="ls-icon" id="ls-icon">✓</div>
-        <div><div class="ls-sku" id="ls-sku">—</div><div class="ls-desc" id="ls-desc">—</div></div>
-      </div>
-    </div>
-
     <div class="scanner-controls">
       <button class="btn btn-green" id="btn-on" onclick="startScanner()">▶ Activar escáner</button>
       <button class="btn btn-secondary" id="btn-off" onclick="stopScanner()" style="display:none">■ Pausar</button>
@@ -314,6 +288,32 @@
     <p class="help-tip">Centra el código de barras en el recuadro rojo.</p>
   </div>
 
+  <!-- 2. CÓDIGO DETECTADO -->
+  <div class="scan-feedback">
+    <div class="pending-scan" id="pending-scan">
+      <div class="pending-label">Código detectado — ¿confirmar?</div>
+      <div class="pending-sku" id="pending-sku">—</div>
+      <div class="pending-desc" id="pending-desc">—</div>
+      <div class="pending-buttons">
+        <button class="btn btn-secondary" onclick="rejectScan()">✕ No</button>
+        <button class="btn btn-green" onclick="confirmScan()">✓ Sí, añadir</button>
+      </div>
+    </div>
+    <div class="last-scan" id="last-scan">
+      <div class="ls-icon" id="ls-icon">✓</div>
+      <div><div class="ls-sku" id="ls-sku">—</div><div class="ls-desc" id="ls-desc">—</div></div>
+    </div>
+  </div>
+
+  <!-- 3. ÚLTIMAS UNIDADES -->
+  <div class="card">
+    <div class="card-title">Últimas unidades registradas</div>
+    <div class="scan-feed" id="scan-feed">
+      <div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>
+    </div>
+  </div>
+
+  <!-- 4. AÑADIR MANUALMENTE -->
   <div class="card">
     <div class="card-title">Añadir manualmente</div>
     <div style="margin-bottom:12px">
@@ -343,14 +343,17 @@
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-title">Últimas unidades registradas</div>
-    <div class="scan-feed" id="scan-feed">
-      <div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>
-    </div>
+  <!-- 5. UNIDADES REGISTRADAS -->
+  <div class="scan-hero">
+    <div class="scan-counter" id="scan-counter">0</div>
+    <div class="scan-label">unidades registradas</div>
+    <div class="progress-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+    <div class="progress-label" id="progress-label">0 / 0 líneas del pedido</div>
   </div>
 
-  <button class="btn btn-secondary" onclick="goToStep(1)" style="margin-top:4px">← Volver al pedido</button>
+  <!-- 6. VER RESULTADO -->
+  <button class="btn btn-primary" onclick="goToResults()" style="margin-bottom:10px">Ver resultado final →</button>
+  <button class="btn btn-secondary" onclick="goToStep(1)">← Volver al pedido</button>
 </div>
 
 <!-- ══ PANTALLA 3: RESULTADO ══ -->
@@ -524,13 +527,6 @@ async function startScanner(){
     });
     await video.play().catch(()=>{});
 
-    // Torch
-    try{
-      const[track]=stream.getVideoTracks();
-      const cap=track.getCapabilities();
-      if(cap&&cap.torch) await track.applyConstraints({advanced:[{torch:true}]});
-    }catch(e){}
-
     // Force ZXing — BarcodeDetector unreliable across Android devices
     document.getElementById('method-tag').textContent='ZXing';
     startZxingScan(stream,video);
@@ -587,9 +583,41 @@ function startZxingScan(stream,video){
       showToast('Error: librería no disponible','red'); return;
     }
     zxingReader=new ZXingLib.BrowserMultiFormatReader();
-    zxingReader.decodeFromStream(stream,video,(result,err)=>{
-      if(result) handleCode(result.getText());
-    });
+
+    // Process each frame in 4 rotations so barcodes are detected in any orientation
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+
+    async function tryDecodeRotated(){
+      if(!scannerOn||video.readyState<2||!video.videoWidth) return;
+      const vw=video.videoWidth, vh=video.videoHeight;
+      const rotations=[0, 90, 180, 270];
+
+      for(const deg of rotations){
+        const rad=deg*Math.PI/180;
+        const isRotated=deg===90||deg===270;
+        canvas.width  = isRotated ? vh : vw;
+        canvas.height = isRotated ? vw : vh;
+        ctx.save();
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(rad);
+        ctx.drawImage(video, -vw/2, -vh/2);
+        ctx.restore();
+        try{
+          const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.85));
+          const url=URL.createObjectURL(blob);
+          const result=await zxingReader.decodeFromImageUrl(url).catch(()=>null);
+          URL.revokeObjectURL(url);
+          if(result){
+            handleCode(result.getText());
+            return; // stop once detected
+          }
+        }catch(e){}
+      }
+    }
+
+    scanInterval=setInterval(tryDecodeRotated, 300);
+
   }catch(e){
     console.error(e); showToast('Error al iniciar escáner','red');
   }
@@ -1240,6 +1268,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.3</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.5</div>
 </body>
 </html>
