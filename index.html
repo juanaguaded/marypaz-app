@@ -108,6 +108,8 @@
   .feed-sku{font-family:var(--mono);font-weight:500;font-size:14px;flex:1}
   .feed-talla{font-family:var(--mono);font-size:12px;color:var(--text-soft)}
   .feed-icon{font-size:16px}
+  .feed-delete{background:none;border:none;color:var(--text-soft);font-size:16px;cursor:pointer;padding:2px 4px;border-radius:4px;line-height:1;flex-shrink:0}
+  .feed-delete:active{background:var(--accent-soft);color:var(--accent)}
   .feed-icon.ok{color:var(--green)}.feed-icon.extra{color:var(--yellow)}.feed-icon.unknown{color:var(--accent)}
 
   /* RESULTS */
@@ -320,13 +322,16 @@
     </div>
     <div style="margin-bottom:12px">
       <div style="font-size:12px;color:var(--text-soft);margin-bottom:8px;font-weight:500">Talla</div>
-      <div class="talla-grid">
+      <div class="talla-grid" style="grid-template-columns:repeat(4,1fr)">
+        <button class="talla-btn" onclick="selectTalla('00')">00</button>
+        <button class="talla-btn" onclick="selectTalla(35)">35</button>
         <button class="talla-btn" onclick="selectTalla(36)">36</button>
         <button class="talla-btn" onclick="selectTalla(37)">37</button>
         <button class="talla-btn" onclick="selectTalla(38)">38</button>
         <button class="talla-btn" onclick="selectTalla(39)">39</button>
         <button class="talla-btn" onclick="selectTalla(40)">40</button>
         <button class="talla-btn" onclick="selectTalla(41)">41</button>
+        <button class="talla-btn" onclick="selectTalla(42)">42</button>
       </div>
     </div>
     <div class="scan-confirm" id="scan-confirm">
@@ -448,10 +453,18 @@ function parseRows(rows,map){
     if(/^\d{5}$/.test(b)){sku=b;desc=row[5]!=null?String(row[5]).trim():'';}
     if(!sku) continue;
     let talla=null;
-    for(const c of[8,10]){if(row[c]!=null){const t=parseInt(row[c]);if(t>=36&&t<=41){talla=t;break}}}
+    for(const c of[8,10]){
+      if(row[c]!=null){
+        const t=parseInt(row[c]);
+        if(t===0||( t>=35&&t<=42)){talla=t===0?'00':t;break}
+      }
+    }
     if(!talla) continue;
+    // Units: col X(23) first, col Z(25) fallback — never col V(21)
     let qty=0;
-    for(const c of[23,25,21]){if(row[c]!=null&&!isNaN(+row[c])){const u=Math.round(+row[c]);if(u>0){qty=u;break}}}
+    for(const c of[23,25]){
+      if(row[c]!=null){const v=String(row[c]).trim();if(v!==''&&!isNaN(+v)){const u=Math.round(+v);if(u>0){qty=u;break}}}
+    }
     if(!qty) continue;
     const key=`${sku}-${talla}`;
     if(map[key]) map[key].qty+=qty; else map[key]={sku,talla,qty,desc};
@@ -714,11 +727,13 @@ function registerUnit(sku,talla,source){
   else{cls='ok';icon='✓';}
   const feed=document.getElementById('scan-feed');
   feed.querySelector('.empty-state')?.remove();
-  const item=document.createElement('div'); item.className='feed-item';
-  item.innerHTML=`<div class="feed-sku">${sku}</div><div class="feed-talla">T${talla}</div><div style="font-size:12px;color:var(--text-soft)">${source==='scan'?'⬛':'✏️'}</div><div class="feed-icon ${cls}">${icon}</div>`;
+  const itemId='item-'+Date.now();
+  const item=document.createElement('div'); item.className='feed-item'; item.id=itemId;
+  item.innerHTML=`<div class="feed-sku">${sku}</div><div class="feed-talla">T${talla}</div><div style="font-size:12px;color:var(--text-soft)">${source==='scan'?'⬛':'✏️'}</div><div class="feed-icon ${cls}">${icon}</div><button class="feed-delete" onclick="deleteUnit('${sku}',${talla},'${itemId}')" title="Eliminar">✕</button>`;
   feed.insertBefore(item,feed.firstChild);
   document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
   updateProgress();
+  saveState();
 }
 
 // ══════════════════════════════════════════════════════
@@ -753,12 +768,115 @@ function confirmManual(){
 }
 
 // ══════════════════════════════════════════════════════
+// DELETE UNIT
+// ══════════════════════════════════════════════════════
+function deleteUnit(sku, talla, itemId){
+  const key=`${sku}-${talla}`;
+  if(!scanned[key]||scanned[key]<=0) return;
+  scanned[key]--;
+  if(scanned[key]===0) delete scanned[key];
+  // Remove from feed
+  const el=document.getElementById(itemId);
+  if(el) el.remove();
+  // If feed is empty show empty state
+  const feed=document.getElementById('scan-feed');
+  if(!feed.children.length){
+    feed.innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>';
+  }
+  document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
+  updateProgress();
+  saveState();
+}
+
+// ══════════════════════════════════════════════════════
+// LOCAL STORAGE — auto-save and restore
+// ══════════════════════════════════════════════════════
+const STORAGE_KEY='marypaz_recepcion_v1';
+
+function saveState(){
+  try{
+    const state={
+      scanned,
+      orderLines,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }catch(e){ console.warn('saveState error:', e) }
+}
+
+function restoreState(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+    const state=JSON.parse(raw);
+    // Only restore if less than 24 hours old
+    if(Date.now()-state.timestamp > 24*60*60*1000){
+      localStorage.removeItem(STORAGE_KEY); return;
+    }
+    if(state.orderLines&&state.orderLines.length){
+      orderLines=state.orderLines;
+      renderPreview();
+      document.getElementById('btn-go-scan').disabled=false;
+      const t=document.getElementById('btn-top'); t.disabled=false; t.style.display='block';
+      const pt=document.getElementById('parse-text');
+      document.getElementById('parse-status').classList.add('show');
+      pt.textContent=`✓ ${orderLines.length} líneas recuperadas (sesión anterior)`;
+    }
+    if(state.scanned&&Object.keys(state.scanned).length){
+      scanned=state.scanned;
+      // Rebuild feed from scanned state
+      const feed=document.getElementById('scan-feed');
+      feed.innerHTML='';
+      for(const key of Object.keys(scanned)){
+        const[sku,talla]=key.split('-');
+        const count=scanned[key];
+        const line=orderLines.find(l=>l.sku===sku&&l.talla===+talla);
+        const got=count, exp=line?line.qty:0;
+        let cls,icon;
+        if(!line){cls='unknown';icon='❓';}
+        else if(got>exp){cls='extra';icon='⚠️';}
+        else{cls='ok';icon='✓';}
+        for(let i=0;i<count;i++){
+          const itemId='item-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+          const item=document.createElement('div'); item.className='feed-item'; item.id=itemId;
+          item.innerHTML=`<div class="feed-sku">${sku}</div><div class="feed-talla">T${+talla}</div><div style="font-size:12px;color:var(--text-soft)">💾</div><div class="feed-icon ${cls}">${icon}</div><button class="feed-delete" onclick="deleteUnit('${sku}',${+talla},'${itemId}')" title="Eliminar">✕</button>`;
+          feed.appendChild(item);
+        }
+      }
+      document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
+      updateProgress();
+      showToast('✓ Sesión anterior recuperada','green');
+    }
+  }catch(e){ console.warn('restoreState error:', e) }
+}
+
+function clearState(){
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+}
+
+// ══════════════════════════════════════════════════════
 // PROGRESS
 // ══════════════════════════════════════════════════════
 function updateProgress(){
   const done=orderLines.filter(l=>(scanned[`${l.sku}-${l.talla}`]||0)>=l.qty).length,total=orderLines.length;
   document.getElementById('progress-bar').style.width=(total?done/total*100:0)+'%';
   document.getElementById('progress-label').textContent=`${done} / ${total} líneas del pedido`;
+}
+
+// ══════════════════════════════════════════════════════
+// DELETE FROM RESULT SCREEN
+// ══════════════════════════════════════════════════════
+function deleteFromResult(sku, talla){
+  const key=`${sku}-${talla}`;
+  if(!scanned[key]||scanned[key]<=0) return;
+  scanned[key]--;
+  if(scanned[key]===0) delete scanned[key];
+  document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
+  updateProgress();
+  saveState();
+  // Re-render results in place
+  renderResults();
+  showToast(`✓ Eliminada 1 ud. de ${sku} T${talla}`,'green');
 }
 
 // ══════════════════════════════════════════════════════
@@ -819,7 +937,7 @@ function renderResults(){
   const totalScanned=Object.values(scanned).reduce((a,b)=>a+b,0);
   document.getElementById('result-subtitle').textContent=`${totalScanned} uds. escaneadas · ${orderLines.length} líneas en albarán`;
 
-  function makeSection(title, cls, rows){
+  function makeSection(title, cls, rows, deletable=false){
     if(!rows.length) return;
     const d=document.createElement('div'); d.className='result-section';
     d.innerHTML=`<div class="result-section-title ${cls}">${title}</div>`+
@@ -828,6 +946,7 @@ function renderResults(){
         <div class="rr-talla">T${l.talla}</div>
         <div class="rr-desc">${l.desc||'—'}</div>
         <div class="rr-qty ${l.qc}">${l.ql}</div>
+        ${deletable?`<button class="rr-delete" onclick="deleteFromResult('${l.sku}',${l.talla})" title="Eliminar una unidad">✕</button>`:''}
       </div>`).join('');
     c.appendChild(d);
   }
@@ -837,11 +956,11 @@ function renderResults(){
   );
 
   makeSection(`⚠️ No esperados (${udsUnexpected} uds.)`, 'rs-unexpected',
-    unexpected.map(l=>({...l, qc:'unexpected', ql:`+${l.got} uds.`}))
+    unexpected.map(l=>({...l, qc:'unexpected', ql:`+${l.got} uds.`})), true
   );
 
   makeSection(`✓ Correctos (${udsOk} uds.)`, 'rs-ok',
-    ok.map(l=>({...l, qc:'', ql:`✓ ${l.got} uds.`}))
+    ok.map(l=>({...l, qc:'', ql:`✓ ${l.got} uds.`})), true
   );
 
   if(udsMissing===0&&udsUnexpected===0)
@@ -918,6 +1037,7 @@ function downloadXLSX(wb,filename){
 function resetAll(){
   stopScanner();
   stopQRScan();
+  clearState();
   orderLines=[];scanned={};selectedTalla=null;currentSku='';pendingSku=null;pendingTalla=null;lastCode='';
   document.getElementById('file-input').value='';
   document.getElementById('preview-card').style.display='none';
@@ -941,6 +1061,9 @@ function showToast(msg,type=''){
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2500);
 }
 window.addEventListener('pagehide',()=>{ if(scannerOn) stopScanner() });
+
+// Restore previous session on load
+window.addEventListener('DOMContentLoaded', restoreState);
 
 // ══════════════════════════════════════════════════════
 // QR SCANNER — reads OneDrive/URL QR codes to load Excel
@@ -1117,6 +1240,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.0</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.3</div>
 </body>
 </html>
