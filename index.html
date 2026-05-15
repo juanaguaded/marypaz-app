@@ -75,6 +75,13 @@
   .pending-desc{font-size:13px;color:var(--text-soft);margin-bottom:14px}
   .pending-buttons{display:flex;gap:10px}
   .pending-buttons .btn{flex:1;padding:13px;font-size:14px}
+  .pending-scan{display:none;background:var(--surface2);border:2px solid var(--text);border-radius:14px;padding:16px;margin-bottom:12px}
+  .pending-scan.show{display:block}
+  .pending-label{font-size:11px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-soft);margin-bottom:10px}
+  .pending-sku{font-family:var(--mono);font-size:28px;font-weight:500;color:var(--text);margin-bottom:4px}
+  .pending-desc{font-size:13px;color:var(--text-soft);margin-bottom:14px}
+  .pending-buttons{display:flex;gap:10px}
+  .pending-buttons .btn{flex:1;padding:13px;font-size:14px}
   .last-scan{display:none;align-items:center;gap:12px;padding:14px 16px;background:var(--green-soft);border-radius:12px;border:1.5px solid #A8D5BB}
   .last-scan.show{display:flex}
   .last-scan.warn{background:var(--yellow-soft);border-color:#D4A840}
@@ -287,8 +294,17 @@
     <p class="help-tip">Centra el código de barras en el recuadro rojo.</p>
   </div>
 
-  <!-- 2. ÚLTIMA UNIDAD REGISTRADA -->
+  <!-- 2. CÓDIGO DETECTADO / ÚLTIMA UNIDAD -->
   <div class="scan-feedback">
+    <div class="pending-scan" id="pending-scan">
+      <div class="pending-label">⚠️ Mismo código — ¿añadir de nuevo?</div>
+      <div class="pending-sku" id="pending-sku">—</div>
+      <div class="pending-desc" id="pending-desc">—</div>
+      <div class="pending-buttons">
+        <button class="btn btn-secondary" onclick="rejectDuplicate()">✕ No</button>
+        <button class="btn btn-green" onclick="confirmDuplicate()">✓ Sí, añadir</button>
+      </div>
+    </div>
     <div class="last-scan" id="last-scan">
       <div class="ls-icon" id="ls-icon">✓</div>
       <div><div class="ls-sku" id="ls-sku">—</div><div class="ls-desc" id="ls-desc">—</div></div>
@@ -583,22 +599,41 @@ function startZxingScan(stream,video){
     }
     zxingReader=new ZXingLib.BrowserMultiFormatReader();
 
-    // Horizontal-only detection at 100ms for maximum speed
-    const canvas=document.createElement('canvas');
-    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    // Two canvases: one for capture, one for greyscale+contrast preprocessing
+    const rawCanvas=document.createElement('canvas');
+    const rawCtx=rawCanvas.getContext('2d',{willReadFrequently:true});
+    const procCanvas=document.createElement('canvas');
+    const procCtx=procCanvas.getContext('2d',{willReadFrequently:true});
 
     async function tryDecode(){
       if(!scannerOn||video.readyState<2||!video.videoWidth) return;
       const vw=video.videoWidth, vh=video.videoHeight;
-      canvas.width=vw; canvas.height=vh;
-      ctx.drawImage(video,0,0,vw,vh);
-      try{
-        const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.85));
-        const url=URL.createObjectURL(blob);
-        const result=await zxingReader.decodeFromImageUrl(url).catch(()=>null);
-        URL.revokeObjectURL(url);
-        if(result) handleCode(result.getText());
-      }catch(e){}
+
+      // Draw raw frame
+      rawCanvas.width=vw; rawCanvas.height=vh;
+      rawCtx.drawImage(video,0,0,vw,vh);
+
+      // Preprocess: greyscale + contrast boost for better barcode detection
+      const imageData=rawCtx.getImageData(0,0,vw,vh);
+      const d=imageData.data;
+      for(let i=0;i<d.length;i+=4){
+        // Greyscale using luminance weights
+        const grey=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114;
+        // Contrast stretch: push towards black or white
+        const contrast=((grey-128)*1.5)+128;
+        const val=Math.max(0,Math.min(255,contrast));
+        d[i]=d[i+1]=d[i+2]=val;
+      }
+      procCanvas.width=vw; procCanvas.height=vh;
+      procCtx.putImageData(imageData,0,0);
+
+      // Try preprocessed canvas first, then raw as fallback
+      for(const c of [procCanvas, rawCanvas]){
+        try{
+          const result=await zxingReader.decodeFromCanvas(c).catch(()=>null);
+          if(result){ handleCode(result.getText()); return; }
+        }catch(e){}
+      }
     }
 
     scanInterval=setInterval(tryDecode, 100);
@@ -637,21 +672,61 @@ function stopScanner(){
   try{ if(screen.orientation&&screen.orientation.unlock) screen.orientation.unlock(); }catch(e){}
 }
 
+let lastRegisteredKey=''; // tracks last registered SKU-talla for duplicate detection
+let pendingDupSku=null, pendingDupTalla=null;
+
 function handleCode(raw){
-  const now=Date.now();
-  if(raw===lastCode&&now-lastCodeTime<DEBOUNCE) return;
+  // Ignore if duplicate confirmation is pending
+  if(document.getElementById('pending-scan').classList.contains('show')) return;
+
   const decoded=decodeMarypaz(raw);
   if(!decoded) return;
-  lastCode='_paused_'; lastCodeTime=now;
-  // Register directly — no confirmation step
-  registerUnit(decoded.sku, decoded.talla, 'scan');
-  showLastScan(decoded.sku, decoded.talla);
+
+  // Debounce: ignore same raw EAN within 300ms to avoid double-fire
+  const now=Date.now();
+  if(raw===lastCode&&now-lastCodeTime<300) return;
+  lastCode=raw; lastCodeTime=now;
+
+  const key=`${decoded.sku}-${decoded.talla}`;
+
+  if(key===lastRegisteredKey){
+    // Same SKU+talla as last registered — ask for confirmation
+    pendingDupSku=decoded.sku; pendingDupTalla=decoded.talla;
+    document.getElementById('pending-sku').textContent=`${decoded.sku}  ·  T${decoded.talla}`;
+    const line=orderLines.find(l=>l.sku===decoded.sku&&l.talla===decoded.talla);
+    const got=(scanned[key]||0)+1, exp=line?line.qty:0;
+    document.getElementById('pending-desc').textContent=line?`${line.desc} · ${got}/${exp} uds.`:'⚠️ No estaba en el pedido';
+    document.getElementById('pending-scan').classList.add('show');
+    if(navigator.vibrate) navigator.vibrate([40,40,40]); // distinct pattern for duplicate
+    return;
+  }
+
+  // Different code — register directly
+  registerDirectly(decoded.sku, decoded.talla);
+}
+
+function registerDirectly(sku, talla){
+  const key=`${sku}-${talla}`;
+  lastRegisteredKey=key;
+  registerUnit(sku, talla, 'scan');
+  showLastScan(sku, talla);
   beep();
   if(navigator.vibrate) navigator.vibrate(80);
   const flash=document.getElementById('scan-flash');
   flash.classList.add('fire'); setTimeout(()=>flash.classList.remove('fire'),120);
-  // 1 second pause before next detection
-  setTimeout(()=>{ lastCode=''; }, 1000);
+}
+
+function confirmDuplicate(){
+  if(!pendingDupSku) return;
+  document.getElementById('pending-scan').classList.remove('show');
+  registerDirectly(pendingDupSku, pendingDupTalla);
+  pendingDupSku=null; pendingDupTalla=null;
+}
+
+function rejectDuplicate(){
+  document.getElementById('pending-scan').classList.remove('show');
+  pendingDupSku=null; pendingDupTalla=null;
+  lastCode=''; // allow re-scan immediately
 }
 
 function beep(){
@@ -1019,6 +1094,8 @@ function resetAll(){
   document.getElementById('btn-top').disabled=true; document.getElementById('btn-top').style.display='none';
   document.getElementById('scan-counter').textContent='0';
   document.getElementById('last-scan').className='last-scan';
+  document.getElementById('pending-scan').classList.remove('show');
+  lastRegisteredKey=''; pendingDupSku=null; pendingDupTalla=null;
   document.getElementById('scan-feed').innerHTML=`<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>`;
   goToStep(1);
 }
@@ -1219,6 +1296,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.7</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.9</div>
 </body>
 </html>
