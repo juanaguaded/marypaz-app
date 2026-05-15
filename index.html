@@ -284,6 +284,7 @@
     <div class="scanner-controls">
       <button class="btn btn-green" id="btn-on" onclick="startScanner()">▶ Activar escáner</button>
       <button class="btn btn-secondary" id="btn-off" onclick="stopScanner()" style="display:none">■ Pausar</button>
+      <button class="btn btn-secondary" id="btn-torch" onclick="toggleTorch()" style="display:none;flex:0;padding:13px 16px;font-size:18px" title="Flash">🔦</button>
     </div>
     <p class="help-tip">Centra el código de barras en el recuadro rojo.</p>
   </div>
@@ -519,6 +520,9 @@ async function startScanner(){
     document.getElementById('scanner-wrap').style.display='block';
     document.getElementById('btn-on').style.display='none';
     document.getElementById('btn-off').style.display='block';
+    document.getElementById('btn-torch').style.display='block';
+    document.getElementById('btn-torch').style.opacity='0.5';
+    torchOn=false;
     scannerOn=true;
 
     await new Promise(resolve=>{
@@ -623,6 +627,19 @@ function startZxingScan(stream,video){
   }
 }
 
+let torchOn=false;
+async function toggleTorch(){
+  if(!videoStream) return;
+  try{
+    const[track]=videoStream.getVideoTracks();
+    const cap=track.getCapabilities();
+    if(!cap||!cap.torch){ showToast('Flash no disponible en este dispositivo','yellow'); return; }
+    torchOn=!torchOn;
+    await track.applyConstraints({advanced:[{torch:torchOn}]});
+    document.getElementById('btn-torch').style.opacity=torchOn?'1':'0.5';
+  }catch(e){ showToast('No se pudo activar el flash','red'); }
+}
+
 function stopScanner(){
   scannerOn=false;
   if(scanInterval){clearInterval(scanInterval);scanInterval=null}
@@ -634,6 +651,8 @@ function stopScanner(){
   document.getElementById('scanner-wrap').style.display='none';
   document.getElementById('btn-on').style.display='block';
   document.getElementById('btn-off').style.display='none';
+  document.getElementById('btn-torch').style.display='none';
+  torchOn=false;
   clearPending();
 }
 
@@ -1268,6 +1287,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.5</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v1.6</div>
 </body>
 </html>
