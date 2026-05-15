@@ -599,41 +599,25 @@ function startZxingScan(stream,video){
     }
     zxingReader=new ZXingLib.BrowserMultiFormatReader();
 
-    // Two canvases: one for capture, one for greyscale+contrast preprocessing
-    const rawCanvas=document.createElement('canvas');
-    const rawCtx=rawCanvas.getContext('2d',{willReadFrequently:true});
-    const procCanvas=document.createElement('canvas');
-    const procCtx=procCanvas.getContext('2d',{willReadFrequently:true});
+    // Horizontal-only detection at 100ms for maximum speed
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
 
     async function tryDecode(){
       if(!scannerOn||video.readyState<2||!video.videoWidth) return;
       const vw=video.videoWidth, vh=video.videoHeight;
-
-      // Draw raw frame
-      rawCanvas.width=vw; rawCanvas.height=vh;
-      rawCtx.drawImage(video,0,0,vw,vh);
-
-      // Preprocess: greyscale + contrast boost for better barcode detection
-      const imageData=rawCtx.getImageData(0,0,vw,vh);
-      const d=imageData.data;
-      for(let i=0;i<d.length;i+=4){
-        // Greyscale using luminance weights
-        const grey=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114;
-        // Contrast stretch: push towards black or white
-        const contrast=((grey-128)*1.5)+128;
-        const val=Math.max(0,Math.min(255,contrast));
-        d[i]=d[i+1]=d[i+2]=val;
-      }
-      procCanvas.width=vw; procCanvas.height=vh;
-      procCtx.putImageData(imageData,0,0);
-
-      // Try preprocessed canvas first, then raw as fallback
-      for(const c of [procCanvas, rawCanvas]){
-        try{
-          const result=await zxingReader.decodeFromCanvas(c).catch(()=>null);
-          if(result){ handleCode(result.getText()); return; }
-        }catch(e){}
-      }
+      // Crop to central horizontal strip (matches the red reticle on screen)
+      // 30% from top, 40% height — exactly where the barcode should be
+      const sx=0, sy=Math.floor(vh*0.30), sw=vw, sh=Math.floor(vh*0.40);
+      canvas.width=sw; canvas.height=sh;
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+      try{
+        const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.92));
+        const url=URL.createObjectURL(blob);
+        const result=await zxingReader.decodeFromImageUrl(url).catch(()=>null);
+        URL.revokeObjectURL(url);
+        if(result) handleCode(result.getText());
+      }catch(e){}
     }
 
     scanInterval=setInterval(tryDecode, 100);
