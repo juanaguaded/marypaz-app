@@ -508,7 +508,7 @@ async function startScanner(){
     let stream;
     try{
       stream=await navigator.mediaDevices.getUserMedia({
-        video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},
+        video:{facingMode:{ideal:'environment'},width:{ideal:1280,max:1280},height:{ideal:720,max:720}},
         audio:false
       });
     }catch(e){
@@ -539,6 +539,17 @@ async function startScanner(){
     try{
       if(screen.orientation&&screen.orientation.lock){
         await screen.orientation.lock('portrait').catch(()=>{});
+      }
+    }catch(e){}
+
+    // Torch ON by default
+    try{
+      const[track]=stream.getVideoTracks();
+      const cap=track.getCapabilities();
+      if(cap&&cap.torch){
+        await track.applyConstraints({advanced:[{torch:true}]});
+        torchOn=true;
+        document.getElementById('btn-torch').style.opacity='1';
       }
     }catch(e){}
 
@@ -620,7 +631,7 @@ function startZxingScan(stream,video){
       }catch(e){}
     }
 
-    scanInterval=setInterval(tryDecode, 100);
+    scanInterval=setInterval(tryDecode, 200);
 
   }catch(e){
     console.error(e); showToast('Error al iniciar escáner','red');
@@ -1292,6 +1303,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.0</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.2</div>
 </body>
 </html>
