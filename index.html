@@ -173,6 +173,10 @@
   .empty-state{text-align:center;padding:30px 20px;color:var(--text-soft);font-size:13px}
   .empty-icon{font-size:36px;margin-bottom:10px}
   .help-tip{font-size:12px;color:var(--text-soft);line-height:1.6;text-align:center;margin-top:8px}
+  .scan-warning{display:none;align-items:center;gap:10px;padding:14px 16px;background:#FFF3CD;border:1.5px solid #F0AD00;border-radius:12px;margin-bottom:12px;animation:slideIn .2s ease}
+  .scan-warning.show{display:flex}
+  .scan-warning-icon{font-size:22px;flex-shrink:0}
+  .scan-warning-text{font-size:13px;color:#856404;font-weight:500}
   .green-badge{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;background:var(--green-soft);color:var(--green);padding:3px 8px;border-radius:20px;border:1px solid #A8D5BB}
 </style>
 </head>
@@ -260,6 +264,13 @@
       <span class="green-badge">Tiempo real</span>
     </div>
 
+    <!-- Warning banner — above camera -->
+    <div class="scan-warning" id="scan-warning" style="margin-bottom:12px">
+      <button onclick="document.getElementById('scan-warning').className='scan-warning'" style="background:none;border:none;font-size:18px;cursor:pointer;color:#856404;flex-shrink:0;padding:0 4px">✕</button>
+      <div class="scan-warning-text" id="scan-warning-text">—</div>
+      <button onclick="document.getElementById('scan-warning').className='scan-warning'" style="background:none;border:none;font-size:18px;cursor:pointer;color:#856404;flex-shrink:0;padding:0 4px">✕</button>
+    </div>
+
     <div class="scanner-off" id="scanner-off">
       <div class="scanner-off-icon">📷</div>
       <div class="scanner-off-text">Toca "Activar escáner"<br>para leer códigos de barras</div>
@@ -297,13 +308,10 @@
   <!-- 2. CÓDIGO DETECTADO / ÚLTIMA UNIDAD -->
   <div class="scan-feedback">
     <div class="pending-scan" id="pending-scan">
-      <div class="pending-label">⚠️ Mismo código — ¿añadir de nuevo?</div>
+      <button class="btn btn-green" onclick="confirmDuplicate()" style="margin-bottom:12px;font-size:16px">✓ Sí, añadir de nuevo</button>
+      <div class="pending-label">⚠️ Mismo código detectado</div>
       <div class="pending-sku" id="pending-sku">—</div>
       <div class="pending-desc" id="pending-desc">—</div>
-      <div class="pending-buttons">
-        <button class="btn btn-secondary" onclick="rejectDuplicate()">✕ No</button>
-        <button class="btn btn-green" onclick="confirmDuplicate()">✓ Sí, añadir</button>
-      </div>
     </div>
     <div class="last-scan" id="last-scan">
       <div class="ls-icon" id="ls-icon">✓</div>
@@ -345,7 +353,7 @@
         <div class="sc-sku" id="sc-sku">—</div>
         <div class="sc-desc" id="sc-desc">—</div>
       </div>
-      <button class="btn btn-accent" style="width:auto;padding:12px 20px;font-size:14px;flex-shrink:0" onclick="confirmManual()">✓ Añadir</button>
+      <button class="btn btn-green" style="width:auto;padding:12px 20px;font-size:14px;flex-shrink:0" onclick="confirmManual()">✓ Añadir</button>
     </div>
   </div>
 
@@ -752,16 +760,22 @@ function showLastScan(sku,talla){
   const line=orderLines.find(l=>l.sku===sku&&l.talla===talla);
   const got=scanned[`${sku}-${talla}`]||0, exp=line?line.qty:0;
   const el=document.getElementById('last-scan');
+  const warn=document.getElementById('scan-warning');
   el.className='last-scan show';
+  warn.className='scan-warning'; // hide by default
   document.getElementById('ls-sku').textContent=`${sku}  ·  T${talla}`;
   if(!line){
     el.className='last-scan show err';
     document.getElementById('ls-icon').textContent='❓';
     document.getElementById('ls-desc').textContent='No estaba en el pedido';
+    document.getElementById('scan-warning-text').textContent=`${sku} T${talla} no está en el albarán`;
+    warn.className='scan-warning show';
   } else if(got>exp){
     el.className='last-scan show warn';
     document.getElementById('ls-icon').textContent='⚠️';
     document.getElementById('ls-desc').textContent=`${got}/${exp} unidades — excedente`;
+    document.getElementById('scan-warning-text').textContent=`Excedente: ${got-exp} ud. extra de ${sku} T${talla}`;
+    warn.className='scan-warning show';
   } else {
     document.getElementById('ls-icon').textContent='✓';
     document.getElementById('ls-desc').textContent=`${got}/${exp} unidades · ${line.desc}`;
@@ -921,6 +935,16 @@ function updateProgress(){
 // ══════════════════════════════════════════════════════
 // DELETE FROM RESULT SCREEN
 // ══════════════════════════════════════════════════════
+function addToResult(sku, talla){
+  const key=`${sku}-${talla}`;
+  scanned[key]=(scanned[key]||0)+1;
+  document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
+  updateProgress();
+  saveState();
+  renderResults();
+  showToast(`+1 ud. añadida: ${sku} T${talla}`,'green');
+}
+
 function deleteFromResult(sku, talla){
   const key=`${sku}-${talla}`;
   if(!scanned[key]||scanned[key]<=0) return;
@@ -992,7 +1016,7 @@ function renderResults(){
   const totalScanned=Object.values(scanned).reduce((a,b)=>a+b,0);
   document.getElementById('result-subtitle').textContent=`${totalScanned} uds. escaneadas · ${orderLines.length} líneas en albarán`;
 
-  function makeSection(title, cls, rows, deletable=false){
+  function makeSection(title, cls, rows, deletable=false, adjustable=false){
     if(!rows.length) return;
     const d=document.createElement('div'); d.className='result-section';
     d.innerHTML=`<div class="result-section-title ${cls}">${title}</div>`+
@@ -1000,14 +1024,17 @@ function renderResults(){
         <div class="rr-sku">${l.sku}</div>
         <div class="rr-talla">T${l.talla}</div>
         <div class="rr-desc">${l.desc||'—'}</div>
+        ${adjustable?`<button class="rr-adjust" onclick="deleteFromResult('${l.sku}',${JSON.stringify(l.talla)})" title="Restar">－</button>`:''}
         <div class="rr-qty ${l.qc}">${l.ql}</div>
-        ${deletable?`<button class="rr-delete" onclick="deleteFromResult('${l.sku}',${l.talla})" title="Eliminar una unidad">✕</button>`:''}
+        ${adjustable?`<button class="rr-adjust" onclick="addToResult('${l.sku}',${JSON.stringify(l.talla)})" title="Añadir">＋</button>`:''}
+        ${deletable&&!adjustable?`<button class="rr-delete" onclick="deleteFromResult('${l.sku}',${JSON.stringify(l.talla)})" title="Eliminar">✕</button>`:''}
       </div>`).join('');
     c.appendChild(d);
   }
 
   makeSection(`❌ Faltan (${udsMissing} uds.)`, 'rs-missing',
-    missing.map(l=>({...l, qc:'missing', ql:`${l.got}/${l.qty} uds.`}))
+    missing.map(l=>({...l, qc:'missing', ql:`${l.got}/${l.qty} uds.`})),
+    false, true
   );
 
   makeSection(`⚠️ No esperados (${udsUnexpected} uds.)`, 'rs-unexpected',
@@ -1303,6 +1330,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.2</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.3</div>
 </body>
 </html>
