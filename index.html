@@ -145,7 +145,11 @@
 
   .toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--text);color:white;padding:12px 20px;border-radius:30px;font-size:14px;font-weight:500;z-index:999;transition:transform .3s cubic-bezier(.34,1.56,.64,1);white-space:nowrap;pointer-events:none}
   .toast.show{transform:translateX(-50%) translateY(0)}
-  .toast.green{background:var(--green)}.toast.red{background:var(--accent)}.toast.yellow{background:var(--yellow)}
+  .toast.green{background:var(--green)}
+  .toast-undo{position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--text);color:white;padding:12px 16px 12px 20px;border-radius:30px;font-size:14px;font-weight:500;z-index:999;transition:transform .3s cubic-bezier(.34,1.56,.64,1);pointer-events:auto;display:flex;align-items:center;gap:12px;white-space:nowrap}
+  .toast-undo.show{transform:translateX(-50%) translateY(0)}
+  .toast-undo-btn{background:rgba(255,255,255,.2);border:none;color:white;font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;cursor:pointer;font-family:var(--sans)}
+  .toast-undo-btn:active{background:rgba(255,255,255,.35)}.toast.red{background:var(--accent)}.toast.yellow{background:var(--yellow)}
 
   /* QR SCANNER */
   .qr-wrap{display:none;position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:12px}
@@ -396,6 +400,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="toast-undo" id="toast-undo">
+  <span id="toast-undo-msg">—</span>
+  <button class="toast-undo-btn" id="toast-undo-btn">Deshacer</button>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
@@ -447,6 +455,13 @@ function handleFileUpload(event){
       orderLines=parseAllSheets(wb);
       if(!orderLines.length){pt.textContent='⚠️ No se encontraron líneas.';return}
       pt.textContent=`✓ ${orderLines.length} líneas de ${wb.SheetNames.length} hojas`;
+      // Clear previous scan data when loading a new order
+      scanned={};
+      lastRegisteredKey='';
+      document.getElementById('scan-counter').textContent='0';
+      document.getElementById('scan-feed').innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>';
+      document.getElementById('last-scan').className='last-scan';
+      updateProgress();
       renderPreview();
       document.getElementById('btn-go-scan').disabled=false;
       const t=document.getElementById('btn-top'); t.disabled=false; t.style.display='block';
@@ -820,6 +835,10 @@ function updateConfirm(){
     const line=orderLines.find(l=>l.sku===currentSku&&l.talla===selectedTalla);
     document.getElementById('sc-sku').textContent=`${currentSku}  ·  T${selectedTalla}`;
     document.getElementById('sc-desc').textContent=line?line.desc:'⚠️ No está en el pedido';
+    // Green border if in order, red if not
+    el.style.background=line?'var(--green-soft)':'var(--accent-soft)';
+    el.style.borderColor=line?'#A8D5BB':'#E8B4A8';
+    document.getElementById('sc-sku').style.color=line?'var(--green)':'var(--accent)';
     el.classList.add('show');
   }else el.classList.remove('show');
 }
@@ -942,7 +961,7 @@ function addToResult(sku, talla){
   updateProgress();
   saveState();
   renderResults();
-  showToast(`+1 ud. añadida: ${sku} T${talla}`,'green');
+  showUndoToast(`+1 añadida: ${sku} T${talla}`, ()=>deleteFromResult(sku, talla));
 }
 
 function deleteFromResult(sku, talla){
@@ -953,9 +972,8 @@ function deleteFromResult(sku, talla){
   document.getElementById('scan-counter').textContent=Object.values(scanned).reduce((a,b)=>a+b,0);
   updateProgress();
   saveState();
-  // Re-render results in place
   renderResults();
-  showToast(`✓ Eliminada 1 ud. de ${sku} T${talla}`,'green');
+  showUndoToast(`−1 eliminada: ${sku} T${talla}`, ()=>addToResult(sku, talla));
 }
 
 // ══════════════════════════════════════════════════════
@@ -1020,15 +1038,29 @@ function renderResults(){
     if(!rows.length) return;
     const d=document.createElement('div'); d.className='result-section';
     d.innerHTML=`<div class="result-section-title ${cls}">${title}</div>`+
-      rows.map(l=>`<div class="result-row">
+      rows.map(l=>`<div class="result-row"
+        data-sku="${l.sku}" data-talla="${l.talla}">
         <div class="rr-sku">${l.sku}</div>
         <div class="rr-talla">T${l.talla}</div>
         <div class="rr-desc">${l.desc||'—'}</div>
-        ${adjustable?`<button class="rr-adjust" onclick="deleteFromResult('${l.sku}',${JSON.stringify(l.talla)})" title="Restar">－</button>`:''}
+        ${adjustable?`<button class="rr-adjust rr-minus" title="Restar">－</button>`:''}
         <div class="rr-qty ${l.qc}">${l.ql}</div>
-        ${adjustable?`<button class="rr-adjust" onclick="addToResult('${l.sku}',${JSON.stringify(l.talla)})" title="Añadir">＋</button>`:''}
-        ${deletable&&!adjustable?`<button class="rr-delete" onclick="deleteFromResult('${l.sku}',${JSON.stringify(l.talla)})" title="Eliminar">✕</button>`:''}
+        ${adjustable?`<button class="rr-adjust rr-plus" title="Añadir">＋</button>`:''}
+        ${deletable&&!adjustable?`<button class="rr-delete rr-del" title="Eliminar">✕</button>`:''}
       </div>`).join('');
+    // Wire buttons via event delegation — safe for any talla value including '00'
+    d.querySelectorAll('.rr-minus').forEach(btn=>{
+      const row=btn.closest('.result-row');
+      btn.addEventListener('click',()=>deleteFromResult(row.dataset.sku, row.dataset.talla));
+    });
+    d.querySelectorAll('.rr-plus').forEach(btn=>{
+      const row=btn.closest('.result-row');
+      btn.addEventListener('click',()=>addToResult(row.dataset.sku, row.dataset.talla));
+    });
+    d.querySelectorAll('.rr-del').forEach(btn=>{
+      const row=btn.closest('.result-row');
+      btn.addEventListener('click',()=>deleteFromResult(row.dataset.sku, row.dataset.talla));
+    });
     c.appendChild(d);
   }
 
@@ -1138,6 +1170,23 @@ function resetAll(){
 // TOAST
 // ══════════════════════════════════════════════════════
 let toastTimer;
+let undoTimer;
+function showUndoToast(msg, undoFn){
+  const el=document.getElementById('toast-undo');
+  const msgEl=document.getElementById('toast-undo-msg');
+  const btn=document.getElementById('toast-undo-btn');
+  msgEl.textContent=msg;
+  el.classList.add('show');
+  // Wire undo button
+  btn.onclick=()=>{
+    el.classList.remove('show');
+    clearTimeout(undoTimer);
+    undoFn();
+  };
+  clearTimeout(undoTimer);
+  undoTimer=setTimeout(()=>el.classList.remove('show'), 4000);
+}
+
 function showToast(msg,type=''){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast '+type; t.classList.add('show');
@@ -1330,6 +1379,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.3</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.4</div>
 </body>
 </html>
