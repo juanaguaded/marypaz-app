@@ -723,7 +723,7 @@ function handleCode(raw){
     // Same SKU+talla as last registered — ask for confirmation
     pendingDupSku=decoded.sku; pendingDupTalla=decoded.talla;
     document.getElementById('pending-sku').textContent=`${decoded.sku}  ·  T${decoded.talla}`;
-    const line=orderLines.find(l=>l.sku===decoded.sku&&l.talla===decoded.talla);
+    const line=orderLines.find(l=>l.sku===decoded.sku&&String(l.talla)===String(decoded.talla));
     const got=(scanned[key]||0)+1, exp=line?line.qty:0;
     document.getElementById('pending-desc').textContent=line?`${line.desc} · ${got}/${exp} uds.`:'⚠️ No estaba en el pedido';
     document.getElementById('pending-scan').classList.add('show');
@@ -772,7 +772,7 @@ function beep(){
 }
 
 function showLastScan(sku,talla){
-  const line=orderLines.find(l=>l.sku===sku&&l.talla===talla);
+  const line=orderLines.find(l=>l.sku===sku&&String(l.talla)===String(talla));
   const got=scanned[`${sku}-${talla}`]||0, exp=line?line.qty:0;
   const el=document.getElementById('last-scan');
   const warn=document.getElementById('scan-warning');
@@ -803,7 +803,7 @@ function showLastScan(sku,talla){
 function registerUnit(sku,talla,source){
   const key=`${sku}-${talla}`;
   scanned[key]=(scanned[key]||0)+1;
-  const line=orderLines.find(l=>l.sku===sku&&l.talla===talla);
+  const line=orderLines.find(l=>l.sku===sku&&String(l.talla)===String(talla));
   const got=scanned[key], exp=line?line.qty:0;
   let cls,icon;
   if(!line){cls='unknown';icon='❓';}
@@ -832,7 +832,7 @@ function selectTalla(t){
 function updateConfirm(){
   const el=document.getElementById('scan-confirm');
   if(currentSku.length===5&&selectedTalla){
-    const line=orderLines.find(l=>l.sku===currentSku&&l.talla===selectedTalla);
+    const line=orderLines.find(l=>l.sku===currentSku&&String(l.talla)===String(selectedTalla));
     document.getElementById('sc-sku').textContent=`${currentSku}  ·  T${selectedTalla}`;
     document.getElementById('sc-desc').textContent=line?line.desc:'⚠️ No está en el pedido';
     // Green border if in order, red if not
@@ -846,7 +846,7 @@ function confirmManual(){
   if(!currentSku||currentSku.length!==5||!selectedTalla){showToast('Completa SKU y talla','red');return}
   registerUnit(currentSku,selectedTalla,'manual');
   showLastScan(currentSku,selectedTalla);
-  const key=`${currentSku}-${selectedTalla}`,line=orderLines.find(l=>l.sku===currentSku&&l.talla===selectedTalla);
+  const key=`${currentSku}-${selectedTalla}`,line=orderLines.find(l=>l.sku===currentSku&&String(l.talla)===String(selectedTalla));
   if(!line) showToast('⚠️ No en pedido','yellow');
   else if(scanned[key]>line.qty) showToast('⚠️ Unidad extra','yellow');
   else showToast(`✓ ${currentSku} T${selectedTalla} (${scanned[key]}/${line.qty})`,'green');
@@ -918,7 +918,7 @@ function restoreState(){
       for(const key of Object.keys(scanned)){
         const[sku,talla]=key.split('-');
         const count=scanned[key];
-        const line=orderLines.find(l=>l.sku===sku&&l.talla===+talla);
+        const line=orderLines.find(l=>l.sku===sku&&String(l.talla)===String(talla));
         const got=count, exp=line?line.qty:0;
         let cls,icon;
         if(!line){cls='unknown';icon='❓';}
@@ -1009,7 +1009,7 @@ function buildResultData(){
   // Scanned items NOT in order at all
   for(const key of Object.keys(scanned)){
     const[s,t]=key.split('-');
-    const inOrder=orderLines.find(l=>l.sku===s&&l.talla===+t);
+    const inOrder=orderLines.find(l=>l.sku===s&&String(l.talla)===String(t));
     if(!inOrder){
       unexpected.push({sku:s, talla:+t, got:scanned[key], desc:'No estaba en el albarán'});
     }
@@ -1379,6 +1379,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.4</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.5</div>
 </body>
 </html>
