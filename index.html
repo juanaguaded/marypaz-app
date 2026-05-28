@@ -458,7 +458,9 @@ function handleFileUpload(event){
       // Clear previous scan data when loading a new order
       scanned={};
       lastRegisteredKey='';
-      clearState(); // clear localStorage immediately
+      // Save clean state to localStorage BEFORE rendering so restore doesn't bring back old data
+      clearState();
+      saveState();
       document.getElementById('scan-counter').textContent='0';
       document.getElementById('progress-bar').style.width='0%';
       document.getElementById('progress-label').textContent='0 / 0 líneas del pedido';
@@ -894,9 +896,12 @@ const STORAGE_KEY='marypaz_recepcion_v1';
 
 function saveState(){
   try{
+    // fingerprint = first SKU + total lines, used to detect if order changed
+    const fingerprint=orderLines.length>0?`${orderLines[0].sku}-${orderLines.length}`:'';
     const state={
       scanned,
       orderLines,
+      fingerprint,
       timestamp: Date.now()
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -921,7 +926,9 @@ function restoreState(){
       document.getElementById('parse-status').classList.add('show');
       pt.textContent=`✓ ${orderLines.length} líneas recuperadas (sesión anterior)`;
     }
-    if(state.scanned&&Object.keys(state.scanned).length){
+    // Only restore scanned if the saved order matches current order (fingerprint check)
+    const currentFingerprint=orderLines.length>0?`${orderLines[0].sku}-${orderLines.length}`:'';
+    if(state.scanned&&Object.keys(state.scanned).length&&state.fingerprint===currentFingerprint){
       scanned=state.scanned;
       // Rebuild feed from scanned state
       const feed=document.getElementById('scan-feed');
@@ -1396,6 +1403,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.7</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.8</div>
 </body>
 </html>
