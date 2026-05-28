@@ -458,6 +458,7 @@ function handleFileUpload(event){
       // Clear previous scan data when loading a new order
       scanned={};
       lastRegisteredKey='';
+      clearState(); // also clear localStorage so restored session doesn't bleed through
       document.getElementById('scan-counter').textContent='0';
       document.getElementById('scan-feed').innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>';
       document.getElementById('last-scan').className='last-scan';
@@ -759,9 +760,16 @@ function rejectDuplicate(){
   lastCode=''; // allow re-scan immediately
 }
 
+// Shared AudioContext — reused across calls, resumed if suspended after screen lock
+let _audioCtx=null;
+function getAudioCtx(){
+  if(!_audioCtx) _audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(_audioCtx.state==='suspended') _audioCtx.resume();
+  return _audioCtx;
+}
 function beep(){
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const ctx=getAudioCtx();
     const osc=ctx.createOscillator(),gain=ctx.createGain();
     osc.connect(gain); gain.connect(ctx.destination);
     osc.frequency.value=1800; osc.type='sine';
@@ -1193,6 +1201,12 @@ function showToast(msg,type=''){
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2500);
 }
 window.addEventListener('pagehide',()=>{ if(scannerOn) stopScanner() });
+// Resume AudioContext when page becomes visible again (after screen lock/unlock)
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&_audioCtx&&_audioCtx.state==='suspended'){
+    _audioCtx.resume();
+  }
+});
 
 // Restore previous session on load
 window.addEventListener('DOMContentLoaded', restoreState);
@@ -1379,6 +1393,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.5</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.6</div>
 </body>
 </html>
