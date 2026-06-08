@@ -181,6 +181,8 @@
   .scan-warning.show{display:flex}
   .scan-warning-icon{font-size:22px;flex-shrink:0}
   .scan-warning-text{font-size:13px;color:#856404;font-weight:500}
+  .debug-panel{background:#1a1a1a;color:#e8ff4a;font-family:var(--mono);font-size:10px;padding:10px 14px;border-radius:10px;margin-top:12px;line-height:1.8;white-space:pre-wrap;max-height:200px;overflow-y:auto;display:none}
+  .debug-panel.show{display:block}
   .green-badge{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;background:var(--green-soft);color:var(--green);padding:3px 8px;border-radius:20px;border:1px solid #A8D5BB}
 </style>
 </head>
@@ -265,7 +267,7 @@
   <div class="card">
     <div class="card-title">
       <span>Escáner de código de barras</span>
-      <span class="green-badge">Tiempo real</span>
+      <button onclick="toggleDebug()" style="background:none;border:1px solid var(--border);color:var(--text-soft);font-size:11px;padding:4px 10px;border-radius:20px;cursor:pointer;font-family:var(--sans);font-weight:500">🔧 Identificar problema</button>
     </div>
 
     <!-- Warning banner — above camera -->
@@ -308,6 +310,9 @@
     </div>
     <p class="help-tip">Centra el código de barras en el recuadro rojo.</p>
   </div>
+
+  <!-- Debug panel — below scanner card -->
+  <div class="debug-panel" id="debug-panel">Panel de diagnóstico activo...</div>
 
   <!-- 2. CÓDIGO DETECTADO / ÚLTIMA UNIDAD -->
   <div class="scan-feedback">
@@ -372,6 +377,8 @@
   <!-- 6. VER RESULTADO -->
   <button class="btn btn-primary" onclick="goToResults()" style="margin-bottom:10px">Ver resultado final →</button>
   <button class="btn btn-secondary" onclick="goToStep(1)">← Volver al pedido</button>
+
+
 </div>
 
 <!-- ══ PANTALLA 3: RESULTADO ══ -->
@@ -409,6 +416,34 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
+// ══════════════════════════════════════════════════════
+// DEBUG LOGGER
+// ══════════════════════════════════════════════════════
+const _dbgLines=[];
+let _dbgOn=false;
+function dbg(msg){
+  if(!_dbgOn) return;
+  const t=new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  _dbgLines.unshift('['+t+'] '+msg);
+  if(_dbgLines.length>20) _dbgLines.pop();
+  const el=document.getElementById('debug-panel');
+  if(el) el.textContent=_dbgLines.join('\n');
+}
+function toggleDebug(){
+  _dbgOn=!_dbgOn;
+  const el=document.getElementById('debug-panel');
+  if(_dbgOn){
+    el.classList.add('show');
+    _dbgLines.length=0;
+    dbg('Panel de diagnóstico activado');
+    dbg('ZXing disponible: '+(window.ZXing?'SÍ':'NO'));
+    dbg('BarcodeDetector: '+('BarcodeDetector' in window));
+    dbg('Escáner activo: '+scannerOn);
+  } else {
+    el.classList.remove('show');
+  }
+}
+
 // ══════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════
@@ -534,6 +569,7 @@ function decodeMarypaz(raw){
 // ══════════════════════════════════════════════════════
 async function startScanner(){
   try{
+    dbg('Solicitando cámara...');
     let stream;
     try{
       stream=await navigator.mediaDevices.getUserMedia({
@@ -541,6 +577,7 @@ async function startScanner(){
         audio:false
       });
     }catch(e){
+      dbg('Alta res falló, reintentando baja res...');
       stream=await navigator.mediaDevices.getUserMedia({
         video:{facingMode:{ideal:'environment'}},audio:false
       });
@@ -582,8 +619,11 @@ async function startScanner(){
       }
     }catch(e){}
 
+    dbg('BarcodeDetector in window: '+('BarcodeDetector' in window));
+    dbg('ZXing lib: '+(window.ZXing?'cargado':'NO cargado'));
     // Force ZXing — BarcodeDetector unreliable across Android devices
     document.getElementById('method-tag').textContent='ZXing';
+    dbg('Iniciando ZXing...');
     startZxingScan(stream,video);
   }catch(err){
     console.error(err);
@@ -656,7 +696,7 @@ function startZxingScan(stream,video){
         const url=URL.createObjectURL(blob);
         const result=await zxingReader.decodeFromImageUrl(url).catch(()=>null);
         URL.revokeObjectURL(url);
-        if(result) handleCode(result.getText());
+        if(result){ dbg('Detectado: '+result.getText()); handleCode(result.getText()); }
       }catch(e){}
     }
 
@@ -701,7 +741,8 @@ let pendingDupSku=null, pendingDupTalla=null;
 
 function handleCode(raw){
   const decoded=decodeMarypaz(raw);
-  if(!decoded) return;
+  if(!decoded){ dbg('EAN no válido para Marypaz: '+raw); return; }
+  dbg('EAN válido: SKU '+decoded.sku+' T'+decoded.talla);
 
   // Debounce: ignore same raw EAN within 300ms to avoid double-fire
   const now=Date.now();
@@ -1229,6 +1270,7 @@ let qrStream=null, qrInterval=null, qrZxing=null, qrActive=false;
 async function startQRScan(){
   if(qrActive){ stopQRScan(); return; }
   try{
+    dbg('Solicitando cámara...');
     let stream;
     try{
       stream=await navigator.mediaDevices.getUserMedia({
@@ -1403,6 +1445,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v2.8</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.0</div>
 </body>
 </html>
