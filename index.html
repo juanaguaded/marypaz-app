@@ -688,11 +688,15 @@ function startZxingScan(stream,video){
       showToast('Error: librería no disponible','red'); return;
     }
     // Restrict to EAN13/EAN8 only — prevents reading QR codes on shoe boxes
-    const hints=new Map();
-    const formats=[ZXingLib.BarcodeFormat.EAN_13, ZXingLib.BarcodeFormat.EAN_8, ZXingLib.BarcodeFormat.CODE_128];
-    hints.set(ZXingLib.DecodeHintType.POSSIBLE_FORMATS, formats);
-    zxingReader=new ZXingLib.BrowserMultiFormatReader(hints);
-    dbg('Iniciando ZXing con decodeFromStream (solo EAN)...');
+    let zxingHints=null;
+    try{
+      const hints=new Map();
+      const formats=[ZXingLib.BarcodeFormat.EAN_13, ZXingLib.BarcodeFormat.EAN_8, ZXingLib.BarcodeFormat.CODE_128];
+      hints.set(ZXingLib.DecodeHintType.POSSIBLE_FORMATS, formats);
+      zxingHints=hints;
+    }catch(e){ dbg('Hints no soportados, usando todos los formatos'); }
+    zxingReader=new ZXingLib.BrowserMultiFormatReader(zxingHints);
+    dbg('Iniciando ZXing con decodeFromStream...');
 
     // decodeFromStream — passes stream directly to ZXing, most compatible method
     zxingReader.decodeFromStream(stream, video, (result, err)=>{
@@ -700,7 +704,8 @@ function startZxingScan(stream,video){
         dbg('Detectado: '+result.getText());
         handleCode(result.getText());
       }
-      if(err&&err.name&&!err.name.includes('NotFoundException')){
+      // NotFoundException = no barcode in frame, completely normal — ignore
+      if(err&&err.name&&!err.name.includes('NotFoundException')&&!err.message?.includes('No MultiFormat')){
         dbg('ZXing err: '+err.name+' '+err.message);
       }
     });
@@ -1447,6 +1452,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.4</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.5</div>
 </body>
 </html>
