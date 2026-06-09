@@ -490,10 +490,20 @@ function handleFileUpload(event){
       orderLines=parseAllSheets(wb);
       if(!orderLines.length){pt.textContent='⚠️ No se encontraron líneas.';return}
       pt.textContent=`✓ ${orderLines.length} líneas de ${wb.SheetNames.length} hojas`;
-      // Clear previous scan data when loading a new order
+      // If there are scanned units from a previous order, ask for confirmation
+      const totalScanned=Object.values(scanned).reduce((a,b)=>a+b,0);
+      if(totalScanned>0){
+        const ok=confirm(`Hay ${totalScanned} unidades registradas del albarán anterior. ¿Cargar el nuevo albarán y borrar esos datos?`);
+        if(!ok){
+          // User cancelled — abort loading new Excel
+          document.getElementById('file-input').value='';
+          document.getElementById('parse-status').classList.remove('show');
+          return;
+        }
+      }
+      // Clear previous scan data
       scanned={};
       lastRegisteredKey='';
-      // Save clean state to localStorage BEFORE rendering so restore doesn't bring back old data
       clearState();
       saveState();
       document.getElementById('scan-counter').textContent='0';
@@ -692,11 +702,19 @@ function startZxingScan(stream,video){
       canvas.width=sw; canvas.height=sh;
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
       try{
-        const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.92));
-        const url=URL.createObjectURL(blob);
-        const result=await zxingReader.decodeFromImageUrl(url).catch(()=>null);
-        URL.revokeObjectURL(url);
-        if(result){ dbg('Detectado: '+result.getText()); handleCode(result.getText()); }
+        try{
+          // Use toDataURL — more compatible than toBlob on some Android devices
+          const dataUrl=canvas.toDataURL('image/jpeg', 0.92);
+          if(!dataUrl||dataUrl==='data:,'){ dbg('canvas vacío'); return; }
+          const result=await zxingReader.decodeFromImageUrl(dataUrl);
+          dbg('Detectado: '+result.getText());
+          handleCode(result.getText());
+        }catch(e){
+          // Log only non-NotFoundException errors
+          if(e&&e.name&&!e.name.includes('NotFoundException')){
+            dbg('ZXing error: '+e.name+' - '+e.message);
+          }
+        }
       }catch(e){}
     }
 
@@ -954,10 +972,7 @@ function restoreState(){
     const raw=localStorage.getItem(STORAGE_KEY);
     if(!raw) return;
     const state=JSON.parse(raw);
-    // Only restore if less than 24 hours old
-    if(Date.now()-state.timestamp > 24*60*60*1000){
-      localStorage.removeItem(STORAGE_KEY); return;
-    }
+    // No expiry — session persists until new order is loaded or reset
     if(state.orderLines&&state.orderLines.length){
       orderLines=state.orderLines;
       renderPreview();
@@ -1445,6 +1460,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.0</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.3</div>
 </body>
 </html>
