@@ -687,11 +687,14 @@ function startZxingScan(stream,video){
     if(!ZXingLib||!ZXingLib.BrowserMultiFormatReader){
       showToast('Error: librería no disponible','red'); return;
     }
-    zxingReader=new ZXingLib.BrowserMultiFormatReader();
-    dbg('Iniciando ZXing con decodeFromStream...');
+    // Restrict to EAN13/EAN8 only — prevents reading QR codes on shoe boxes
+    const hints=new Map();
+    const formats=[ZXingLib.BarcodeFormat.EAN_13, ZXingLib.BarcodeFormat.EAN_8, ZXingLib.BarcodeFormat.CODE_128];
+    hints.set(ZXingLib.DecodeHintType.POSSIBLE_FORMATS, formats);
+    zxingReader=new ZXingLib.BrowserMultiFormatReader(hints);
+    dbg('Iniciando ZXing con decodeFromStream (solo EAN)...');
 
     // decodeFromStream — passes stream directly to ZXing, most compatible method
-    // Works on devices where canvas-based approaches fail (e.g. Samsung S23)
     zxingReader.decodeFromStream(stream, video, (result, err)=>{
       if(result){
         dbg('Detectado: '+result.getText());
@@ -1444,6 +1447,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.3</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.4</div>
 </body>
 </html>
