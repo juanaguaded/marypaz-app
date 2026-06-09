@@ -688,42 +688,26 @@ function startZxingScan(stream,video){
       showToast('Error: librería no disponible','red'); return;
     }
     zxingReader=new ZXingLib.BrowserMultiFormatReader();
+    dbg('Iniciando ZXing con decodeFromStream...');
 
-    // Horizontal-only detection at 100ms for maximum speed
-    const canvas=document.createElement('canvas');
-    const ctx=canvas.getContext('2d',{willReadFrequently:true});
-
-    async function tryDecode(){
-      if(!scannerOn||video.readyState<2||!video.videoWidth) return;
-      const vw=video.videoWidth, vh=video.videoHeight;
-      // Crop to central horizontal strip (matches the red reticle on screen)
-      // 30% from top, 40% height — exactly where the barcode should be
-      const sx=0, sy=Math.floor(vh*0.30), sw=vw, sh=Math.floor(vh*0.40);
-      canvas.width=sw; canvas.height=sh;
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-      try{
-        try{
-          // Use toDataURL — more compatible than toBlob on some Android devices
-          const dataUrl=canvas.toDataURL('image/jpeg', 0.92);
-          if(!dataUrl||dataUrl==='data:,'){ dbg('canvas vacío'); return; }
-          const result=await zxingReader.decodeFromImageUrl(dataUrl);
-          dbg('Detectado: '+result.getText());
-          handleCode(result.getText());
-        }catch(e){
-          // Log only non-NotFoundException errors
-          if(e&&e.name&&!e.name.includes('NotFoundException')){
-            dbg('ZXing error: '+e.name+' - '+e.message);
-          }
-        }
-      }catch(e){}
-    }
-
-    scanInterval=setInterval(tryDecode, 200);
+    // decodeFromStream — passes stream directly to ZXing, most compatible method
+    // Works on devices where canvas-based approaches fail (e.g. Samsung S23)
+    zxingReader.decodeFromStream(stream, video, (result, err)=>{
+      if(result){
+        dbg('Detectado: '+result.getText());
+        handleCode(result.getText());
+      }
+      if(err&&err.name&&!err.name.includes('NotFoundException')){
+        dbg('ZXing err: '+err.name+' '+err.message);
+      }
+    });
 
   }catch(e){
+    dbg('startZxingScan error: '+e.message);
     console.error(e); showToast('Error al iniciar escáner','red');
   }
 }
+
 
 let torchOn=false;
 async function toggleTorch(){
