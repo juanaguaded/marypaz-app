@@ -685,36 +685,41 @@ function startZxingScan(stream,video){
   try{
     const ZXingLib=window.ZXing;
     if(!ZXingLib||!ZXingLib.BrowserMultiFormatReader){
+      dbg('ERROR: ZXing no disponible');
       showToast('Error: librería no disponible','red'); return;
     }
-    // Restrict to EAN13/EAN8 only — prevents reading QR codes on shoe boxes
-    let zxingHints=null;
-    try{
-      const hints=new Map();
-      const formats=[ZXingLib.BarcodeFormat.EAN_13, ZXingLib.BarcodeFormat.EAN_8, ZXingLib.BarcodeFormat.CODE_128];
-      hints.set(ZXingLib.DecodeHintType.POSSIBLE_FORMATS, formats);
-      zxingHints=hints;
-    }catch(e){ dbg('Hints no soportados, usando todos los formatos'); }
-    zxingReader=new ZXingLib.BrowserMultiFormatReader(zxingHints);
-    dbg('Iniciando ZXing con decodeFromStream...');
+    dbg('ZXing lib cargado, sin hints');
 
-    // decodeFromStream — passes stream directly to ZXing, most compatible method
-    zxingReader.decodeFromStream(stream, video, (result, err)=>{
+    // NO hints — let ZXing detect any format, we filter in handleCode
+    // Hints cause false negatives on some Samsung devices
+    zxingReader=new ZXingLib.BrowserMultiFormatReader();
+
+    dbg('Iniciando decodeFromConstraints...');
+    const constraints={video:{facingMode:{ideal:'environment'}}};
+    zxingReader.decodeFromConstraints(constraints, video, (result, err)=>{
       if(result){
         dbg('Detectado: '+result.getText());
         handleCode(result.getText());
       }
-      // NotFoundException = no barcode in frame, completely normal — ignore
-      if(err&&err.name&&!err.name.includes('NotFoundException')&&!err.message?.includes('No MultiFormat')){
-        dbg('ZXing err: '+err.name+' '+err.message);
+      if(err&&err.name&&!err.name.includes('NotFoundException')){
+        dbg('ZXing err: '+err.name);
       }
+    }).then(()=>dbg('decodeFromConstraints activo')).catch(e=>{
+      dbg('constraints falló: '+e.message+', probando decodeFromStream...');
+      try{
+        const reader2=new ZXingLib.BrowserMultiFormatReader();
+        reader2.decodeFromStream(stream, video, (result)=>{
+          if(result){ dbg('Detectado (stream): '+result.getText()); handleCode(result.getText()); }
+        });
+      }catch(e2){ dbg('stream también falló: '+e2.message); }
     });
 
   }catch(e){
     dbg('startZxingScan error: '+e.message);
-    console.error(e); showToast('Error al iniciar escáner','red');
+    showToast('Error al iniciar escáner','red');
   }
 }
+
 
 
 let torchOn=false;
@@ -734,6 +739,7 @@ function stopScanner(){
   scannerOn=false;
   if(scanInterval){clearInterval(scanInterval);scanInterval=null}
   if(zxingReader){try{zxingReader.reset();}catch(e){} zxingReader=null}
+  if(window._canvasReader){try{window._canvasReader.reset();}catch(e){} window._canvasReader=null}
   if(videoStream){videoStream.getTracks().forEach(t=>t.stop());videoStream=null}
   const video=document.getElementById('scanner-video');
   video.srcObject=null;
@@ -1452,6 +1458,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.5</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.8</div>
 </body>
 </html>
