@@ -478,6 +478,28 @@ function goToResults(){ renderResults(); goToStep(3) }
 // ══════════════════════════════════════════════════════
 // FILE UPLOAD
 // ══════════════════════════════════════════════════════
+// Centralised reset — called by both file upload and QR load
+function resetScanState(){
+  const totalScanned=Object.values(scanned).reduce((a,b)=>a+b,0);
+  if(totalScanned>0){
+    const ok=confirm(`Hay ${totalScanned} unidades registradas del albarán anterior. ¿Cargar el nuevo albarán y borrar esos datos?`);
+    if(!ok) return false;
+  }
+  scanned={};
+  lastRegisteredKey='';
+  clearState();
+  saveState();
+  document.getElementById('scan-counter').textContent='0';
+  document.getElementById('progress-bar').style.width='0%';
+  document.getElementById('progress-label').textContent='0 / 0 líneas del pedido';
+  document.getElementById('scan-feed').innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>';
+  document.getElementById('last-scan').className='last-scan';
+  document.getElementById('scan-warning').className='scan-warning';
+  document.getElementById('pending-scan').classList.remove('show');
+  lastRegisteredKey=''; pendingDupSku=null; pendingDupTalla=null;
+  return true;
+}
+
 function handleFileUpload(event){
   const file=event.target.files[0]; if(!file) return;
   const pt=document.getElementById('parse-text');
@@ -490,29 +512,12 @@ function handleFileUpload(event){
       orderLines=parseAllSheets(wb);
       if(!orderLines.length){pt.textContent='⚠️ No se encontraron líneas.';return}
       pt.textContent=`✓ ${orderLines.length} líneas de ${wb.SheetNames.length} hojas`;
-      // If there are scanned units from a previous order, ask for confirmation
-      const totalScanned=Object.values(scanned).reduce((a,b)=>a+b,0);
-      if(totalScanned>0){
-        const ok=confirm(`Hay ${totalScanned} unidades registradas del albarán anterior. ¿Cargar el nuevo albarán y borrar esos datos?`);
-        if(!ok){
-          // User cancelled — abort loading new Excel
-          document.getElementById('file-input').value='';
-          document.getElementById('parse-status').classList.remove('show');
-          return;
-        }
+      // Reset scan state — will ask confirmation if there are scanned units
+      if(!resetScanState()){
+        document.getElementById('file-input').value='';
+        document.getElementById('parse-status').classList.remove('show');
+        return;
       }
-      // Clear previous scan data
-      scanned={};
-      lastRegisteredKey='';
-      clearState();
-      saveState();
-      document.getElementById('scan-counter').textContent='0';
-      document.getElementById('progress-bar').style.width='0%';
-      document.getElementById('progress-label').textContent='0 / 0 líneas del pedido';
-      document.getElementById('scan-feed').innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><div>Activa el escáner para empezar</div></div>';
-      document.getElementById('last-scan').className='last-scan';
-      document.getElementById('scan-warning').className='scan-warning';
-      document.getElementById('pending-scan').classList.remove('show');
       renderPreview();
       document.getElementById('btn-go-scan').disabled=false;
       const t=document.getElementById('btn-top'); t.disabled=false; t.style.display='block';
@@ -1363,10 +1368,13 @@ async function handleQRCode(url){
     const arrayBuffer=await response.arrayBuffer();
     console.log('[QR] Bytes recibidos:', arrayBuffer.byteLength);
     const wb=XLSX.read(new Uint8Array(arrayBuffer),{type:'array'});
-    orderLines=parseAllSheets(wb);
-    if(!orderLines.length){
+    const newLines=parseAllSheets(wb);
+    if(!newLines.length){
       showToast('No se encontraron líneas en el Excel','red'); return;
     }
+    // Reset scan state — asks confirmation if previous scanned units exist
+    if(!resetScanState()) return;
+    orderLines=newLines;
     const pt=document.getElementById('parse-text');
     document.getElementById('parse-status').classList.add('show');
     pt.textContent=`✓ ${orderLines.length} líneas cargadas de ${wb.SheetNames.length} hojas`;
@@ -1458,6 +1466,6 @@ function generateQR(url){
   }
 }
 </script>
-<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.8</div>
+<div style="text-align:center;padding:20px 0 4px;font-family:'DM Mono',monospace;font-size:10px;color:#B0A89E">v3.1</div>
 </body>
 </html>
